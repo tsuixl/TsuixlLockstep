@@ -1,57 +1,65 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.IO;
 using System.Reflection;
-using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
-using Google.Proto;
-using Google.Protobuf;
-using Microsoft.Extensions.Configuration;
+using log4net;
+using log4net.Config;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Server.Command;
-using Server.IdUtil;
+using Server.Game;
 using Server.Package;
 using SuperSocket;
 using SuperSocket.Command;
-using SuperSocket.ProtoBase;
 
 namespace Server
 {
     class Program
     {
+        private static GameWorld _sGameWorld; 
         
-        // static IHostBuilder CreateSocketServerBuilder(string[] args)
-        // {
-        //     return SuperSocketHostBuilder.Create<StringPackageInfo, CommandLinePipelineFilter>(args)
-        //         .UseCommand((commandOptions) =>
-        //         {
-        //             // register commands one by one
-        //             commandOptions.AddCommand<ADD>();
-        //             commandOptions.AddCommand<MULT>();
-        //             commandOptions.AddCommand<SUB>();
-        //
-        //             // register all commands in one aassembly
-        //             //commandOptions.AddCommandAssembly(typeof(SUB).GetTypeInfo().Assembly);
-        //         })
-        //         .ConfigureAppConfiguration((hostCtx, configApp) =>
-        //         {
-        //             configApp.AddInMemoryCollection(new Dictionary<string, string>
-        //             {
-        //                 { "serverOptions:name", "TestServer" },
-        //                 { "serverOptions:listeners:0:ip", "Any" },
-        //                 { "serverOptions:listeners:0:port", "4040" }
-        //             });
-        //         })
-        //         .ConfigureLogging((hostCtx, loggingBuilder) =>
-        //         {
-        //             loggingBuilder.AddConsole();
-        //         });
-        // }
-        
-        static async Task Main(string[] args)
+        static void Main(string[] args)
+        {
+            InitLog();
+            
+            var contex = new SynchronizationQueue();
+            var superSocket = RunSuperSocket(args);
+            Console.WriteLine("Main Thread ID " + Thread.CurrentThread.ManagedThreadId);
+            _sGameWorld = new GameWorld();
+            try
+            {
+                while (true)
+                {
+                    Thread.Sleep(3);
+                    contex.Update();
+                    _sGameWorld.Update();
+                    if (superSocket.IsCanceled || superSocket.Exception != null)
+                    {
+                        break;
+                    }
+                }
+                _sGameWorld?.OnDestroy();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
+        }
+
+
+        static void InitLog()
+        {
+            var logRepository = LogManager.GetRepository(Assembly.GetEntryAssembly());
+            XmlConfigurator.Configure(logRepository, new FileInfo("log4net.config"));
+            MDC.Set("tab", "\t");
+        }
+
+        static Task RunSuperSocket(string[] args)
         {
             var host = SuperSocketHostBuilder.Create<DefaultPackage, DefaultPackageFilter>(args)
+                .UseHostedService<GameService<DefaultPackage>>()
                 .UseCommand((commandOptions) =>
                 {
                     commandOptions.AddCommand<LoginCommand>();
@@ -73,7 +81,8 @@ namespace Server
                 {
                     loggingBuilder.AddConsole();
                 }).Build();
-            await host.RunAsync();
+            
+            return host.RunAsync();
         }
     }
 }
